@@ -340,13 +340,19 @@ async function main(): Promise<void> {
       });
 
       for (const msg of result.messages || []) {
-        if (hasRobotReaction(msg as { reactions?: Array<{ name: string }> })) {
+        const hasEmoji = hasRobotReaction(msg as { reactions?: Array<{ name: string }> });
+        const hasBotReply = ((msg as { reply_users?: string[] }).reply_users || []).includes(botUserId!);
+
+        if (hasEmoji && hasBotReply) {
+          // Reliable watermark — emoji AND bot reply means fully processed
           foundLastProcessed = true;
           break outer;
         }
 
         if (!isProcessableMessage(msg as Parameters<typeof isProcessableMessage>[0])) continue;
 
+        // Messages with emoji but no bot reply were partially processed (crash after emoji, before reply)
+        // Include them for reprocessing
         missedMessages.push(msg as typeof missedMessages[0]);
       }
 

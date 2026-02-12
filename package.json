@@ -16,7 +16,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.39",
     "@linear/sdk": "^29.0.0",
     "@slack/bolt": "^3.17.0",
     "dotenv": "^16.3.0",

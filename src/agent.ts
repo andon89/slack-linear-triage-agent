@@ -1072,6 +1072,11 @@ If you take action (update or create), reply in Slack using the channel and thre
         const text = typeof message.message === "string" ? message.message : JSON.stringify(message.message);
         console.log("[Orphan Thread Agent]:", text.substring(0, 200));
 
+        if (text.includes('"model":"<synthetic>"') || text.includes('"input_tokens":0')) {
+          console.log("[Orphan Thread Agent] Skipping synthetic/error response");
+          continue;
+        }
+
         if (text.includes("linear_add_comment") || text.toLowerCase().includes("added") && text.toLowerCase().includes("comment")) {
           addedComment = true;
         }
@@ -1200,6 +1205,11 @@ ${actionInstruction}`;
       if (message.type === "assistant") {
         const text = typeof message.message === "string" ? message.message : JSON.stringify(message.message);
         console.log("[Followup Agent]:", text.substring(0, 200));
+
+        if (text.includes('"model":"<synthetic>"') || text.includes('"input_tokens":0')) {
+          console.log("[Followup Agent] Skipping synthetic/error response");
+          continue;
+        }
       }
       if (message.type === "result") {
         console.log("[Followup Agent Complete] Cost:", message.total_cost_usd);
@@ -1297,6 +1307,11 @@ Remember: If this is just a team member providing context/answering, respond wit
       if (message.type === "assistant") {
         const text = typeof message.message === "string" ? message.message : JSON.stringify(message.message);
         console.log("[Deferred Followup Agent]:", text.substring(0, 200));
+
+        if (text.includes('"model":"<synthetic>"') || text.includes('"input_tokens":0')) {
+          console.log("[Deferred Followup Agent] Skipping synthetic/error response");
+          continue;
+        }
 
         const idMatch = text.match(/"id"\s*:\s*"([^"]+)"/);
         if (idMatch && !capturedTicketId) {
@@ -1430,6 +1445,11 @@ Analyze the command and execute it. Remember:
         const text = typeof message.message === "string" ? message.message : JSON.stringify(message.message);
         console.log("[Command Agent]:", text.substring(0, 200));
 
+        if (text.includes('"model":"<synthetic>"') || text.includes('"input_tokens":0')) {
+          console.log("[Command Agent] Skipping synthetic/error response");
+          continue;
+        }
+
         if (text.toLowerCase().includes("available commands") || text.toLowerCase().includes("what can you do") || text.toLowerCase().includes("here's what i can")) {
           finalResult = { action: "help", message: text };
         }
@@ -1525,6 +1545,11 @@ Analyze the edit and take appropriate action:
       if (message.type === "assistant") {
         const text = typeof message.message === "string" ? message.message : JSON.stringify(message.message);
         console.log("[Edit Agent]:", text.substring(0, 200));
+
+        if (text.includes('"model":"<synthetic>"') || text.includes('"input_tokens":0')) {
+          console.log("[Edit Agent] Skipping synthetic/error response");
+          continue;
+        }
       }
       if (message.type === "result") {
         console.log("[Edit Agent Complete] Cost:", message.total_cost_usd);
@@ -1587,6 +1612,11 @@ Add a brief, factual note to the ticket that the original Slack message was dele
       if (message.type === "assistant") {
         const text = typeof message.message === "string" ? message.message : JSON.stringify(message.message);
         console.log("[Delete Agent]:", text.substring(0, 200));
+
+        if (text.includes('"model":"<synthetic>"') || text.includes('"input_tokens":0')) {
+          console.log("[Delete Agent] Skipping synthetic/error response");
+          continue;
+        }
       }
       if (message.type === "result") {
         console.log("[Delete Agent Complete] Cost:", message.total_cost_usd);
