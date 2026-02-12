@@ -1,0 +1,37 @@
+_metadata:
+  major_version: 2
+  minor_version: 1
+
+display_information:
+  name: Triage Agent
+  description: AI-powered triage agent that creates Linear tickets from Slack messages
+  background_color: "#4A154B"
+
+features:
+  bot_user:
+    display_name: triage_bot
+    always_online: true
+
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - groups:history
+      - channels:read
+      - groups:read
+      - chat:write
+      - reactions:write
+      - users:read
+      - users:read.email
+      - files:read
+
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+      - message.groups
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

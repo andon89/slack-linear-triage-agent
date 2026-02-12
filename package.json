@@ -1,0 +1,30 @@
+{
+  "name": "slack-linear-triage-agent",
+  "version": "1.0.0",
+  "description": "Customizable Slack-to-Linear triage agent using the Claude Agent SDK. Monitors a Slack channel, creates Linear tickets from actionable messages, and handles follow-ups.",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "npx tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@linear/sdk": "^29.0.0",
+    "@slack/bolt": "^3.17.0",
+    "dotenv": "^16.3.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.0.0"
+  }
+}
