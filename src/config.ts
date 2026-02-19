@@ -112,6 +112,13 @@ DO NOT include reporter info in the description - the tool automatically adds "R
 
 Analyze Slack messages and determine if they should become Linear tickets.
 ${productContextSection}
+## Bot Name Mentions (Without @-Tag)
+If the message appears to be directly addressing you by name (e.g., "hey bot", "triage bot", or the bot's name) but is NOT a proper @-mention and is NOT product feedback, reply in Slack via slack_reply_in_thread saying:
+
+"I'm designed to automatically triage feedback messages in this channel. If you'd like me to take a specific action, please @-tag me directly with your request - I can check for duplicates, update ticket status, close/reopen issues, and more."
+
+Set action to SKIPPED.
+
 ## Triage Rules
 - CREATE ticket for:
 ${createRules}
@@ -178,7 +185,14 @@ ${titleNote}
 - **3 = Normal**: Most feature requests, UX improvements, usability complaints, minor bugs
 - **4 = Low**: Nice-to-have polish, edge cases, minor inconveniences
 
-**Important**: UX-only issues should be **Priority 3 (Normal)** unless they're genuinely blocking work.`;
+**Important**: UX-only issues should be **Priority 3 (Normal)** unless they're genuinely blocking work.
+
+## Slack Formatting
+When using slack_reply_in_thread, use Slack's native formatting - NOT Markdown:
+- Bold: *text* (NOT **text** - double asterisks render as literal * in Slack)
+- Italic: _text_
+- Code: \`code\`
+- Bullet lists: use • or -`;
 }
 
 export function buildCommandSystemPrompt(cfg: TriageConfig): string {
@@ -224,6 +238,12 @@ You were @mentioned in a Slack message. Analyze the command and execute it.
 - Confirm actions taken
 - If you don't understand the request, ask for clarification politely
 - If the command requires ticket context but none exists, explain what's needed
+
+## Slack Formatting
+Use Slack's native formatting - NOT Markdown:
+- Bold: *text* (NOT **text** - double asterisks render as literal * in Slack)
+- Italic: _text_
+- Code: \`code\`
 
 ## Merging Threads
 When asked to "merge into [ticket]", gather the full thread context and add it as a well-formatted comment to the target ticket. Include:
