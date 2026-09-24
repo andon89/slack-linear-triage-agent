@@ -58,6 +58,8 @@ export interface TriageConfig {
   productContext: string;
   /** Internal email domain (e.g., "mycompany.com") used to distinguish team vs. external users. */
   internalEmailDomain: string;
+  /** Slack user IDs to @-mention whenever the bot defers a thread to the team (e.g. the PM). */
+  deferMentions: string[];
   /** Claude model ID used for every agent run (e.g. "claude-opus-5"). */
   model: string;
   /** Reasoning effort for agent runs. Lower is faster and cheaper; "high" is the API default. */
@@ -81,20 +83,26 @@ export function buildTriageSystemPrompt(cfg: TriageConfig): string {
     ? cfg.triageRules.skipFor.map((r) => `- ${r}`).join("\n")
     : '- "thanks", "ok", "+1", casual chat, greetings';
 
-  const deferSection = cfg.triageRules.deferFor.length > 0
-    ? `\n## When to DEFER
-DEFER when the message asks about or requests features on the known roadmap:
-${cfg.triageRules.deferFor.map((r) => `- ${r}`).join("\n")}
+  const knownTopics = cfg.triageRules.deferFor.length > 0
+    ? `These are the ONLY topics whose roadmap status you know. You may describe them exactly as written here:
+${cfg.triageRules.deferFor.map((r) => `- ${r}`).join("\n")}`
+    : "You have no information about the roadmap.";
+
+  const deferSection = `
+## When to DEFER
+DEFER questions about the roadmap or future plans, and requests that need a team decision rather than a bug fix.
+
+${knownTopics}
+
+## Never guess roadmap status
+Do not state or imply that anything is planned, on the roadmap, post-MVP, coming later, "future work", or not planned - unless it appears in the list above, and then only as described there. Don't infer status by analogy to a listed topic. For anything not listed, say plainly that you don't have information on it and that you're flagging it for the team. Describing what the product does TODAY (from the product context) is fine.
 
 When you DEFER:
-- Share what you know about the topic
-- Then defer: "I'll let the team share more details"
+- Briefly share what you know from the product context, following the rule above
+- Hand off to the team - the tool tags the right people automatically, so don't @-mention anyone yourself
 - Do NOT create a ticket - the thread will be monitored for follow-ups
 - Respond with the slack_defer_to_team tool (not slack_reply_in_thread) - that is how the bot knows to watch the thread
-
-**DEFER Response Style** (be helpful, not robotic):
-- Share relevant context, then defer to the team for specifics\n`
-    : "";
+`;
 
   const titleNote = cfg.issueTemplate.titlePrefix
     ? `Provide just the issue title WITHOUT the "${cfg.issueTemplate.titlePrefix}" prefix (it's added automatically by the tool). Keep titles concise (max 80 chars).`
@@ -126,7 +134,7 @@ Don't create a ticket in this case.
 ${createRules}
 - SKIP (call no tools, just state your reason in one line):
 ${skipRules}
-- DEFER (let team respond): questions about roadmap features, requests needing team discussion. Always defer with the slack_defer_to_team tool, never slack_reply_in_thread.
+- DEFER (let team respond): roadmap questions and requests needing a team decision - see "When to DEFER" below. Always defer with the slack_defer_to_team tool, never slack_reply_in_thread.
 ${deferSection}
 ## Forwarded Messages
 Sometimes feedback is forwarded/shared from other channels. When a message is marked as FORWARDED:
@@ -526,6 +534,8 @@ const config: TriageConfig = {
   productContext: "", // Extended product context (markdown). Leave empty for minimal context.
 
   internalEmailDomain: "", // e.g., "mycompany.com" - used to detect internal vs external users
+
+  deferMentions: [], // e.g., ["U0123ABCD"] - Slack user IDs tagged when a thread is deferred
 
   model: "claude-opus-5",
   effort: "high",

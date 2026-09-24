@@ -37,6 +37,10 @@ Four source files with a clear split between configuration and infrastructure:
 
 Tools write their side effects to the run's `RunRecorder` (`created`, `commentedOn`, `updated`, `deferred`, `repliedInSlack`). Flows derive their result from it — e.g. triage is `created` if `linear_create_issue` ran, `duplicate` if `linear_add_comment` ran, `deferred` if `slack_defer_to_team` ran, otherwise `skipped`. Don't reintroduce regex matching on model output. If a new outcome matters for routing, add a tool (or a recorder field set by an existing tool) that captures it.
 
+### Roadmap claims
+
+`triageRules.deferFor` is the only roadmap knowledge the bot has. The triage prompt forbids stating or implying roadmap status for anything not in that list, and `scripts/smoke.ts` fails a deferral that uses roadmap-claim phrases for an unlisted topic. Keep both in place when editing prompts.
+
 ### In-Memory State (index.ts)
 
 - **`threadTicketMap`** — Maps `thread_ts` → ticket info (ID, identifier, isDuplicate, isDeferred, originalReporterId). Used to route thread replies to the correct handler. 24h TTL.
@@ -87,7 +91,7 @@ Optional: `LINEAR_PROJECT_ID` (scopes new tickets and duplicate search to one pr
 
 ### Config Object (`src/config.ts`)
 Required: `productName`, `productShortName`, `productDescription`, `slackChannelName`, `linearOrganization`
-Optional: `issueTemplate` (titlePrefix, labelIds, stateId, descriptionTemplate), `triageRules` (createFor, skipFor, deferFor), `productContext`, `internalEmailDomain`, `model` (full model ID), `effort`
+Optional: `issueTemplate` (titlePrefix, labelIds, stateId, descriptionTemplate), `triageRules` (createFor, skipFor, deferFor), `productContext`, `internalEmailDomain`, `deferMentions` (Slack user IDs tagged on deferral), `model` (full model ID), `effort`
 
 ## Development Workflow
 

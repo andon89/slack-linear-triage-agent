@@ -241,7 +241,12 @@ export function createTools(recorder: RunRecorder) {
       threadTs: z.string().describe("Thread timestamp to reply to (given in the prompt)"),
     }),
     run: async ({ text, channel, threadTs }) => {
-      await requireDeps().slack.chat.postMessage({ channel, thread_ts: threadTs, text });
+      const mentions = config.deferMentions.map((id) => `<@${id}>`).join(" ");
+      await requireDeps().slack.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: mentions ? `${text}\n\ncc ${mentions}` : text,
+      });
       recorder.deferred = true;
       recorder.repliedInSlack = true;
       return JSON.stringify({ success: true, deferred: true });

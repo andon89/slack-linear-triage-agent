@@ -113,6 +113,7 @@ The codebase is split into two layers:
 - **Model**: `claude-opus-5` by default (`config.model`), with `effort` controlling reasoning depth.
 - **Refusal fallbacks**: on Opus 5 / Fable 5 models, requests opt into server-side fallbacks (`fallbacks: "default"`), so a safety-classifier decline is retried on Anthropic's recommended fallback model instead of failing.
 - **Prompt caching**: top-level `cache_control` caches the system prompt, tools, and conversation between tool-loop iterations.
+- **No roadmap guessing**: the bot only states roadmap status for topics listed in `triageRules.deferFor`. For anything else it says it has no information and flags the team (tagging `deferMentions`).
 - **Vision**: screenshots on new messages are sent to Claude as image blocks and re-hosted on Linear's CDN for the ticket.
 
 ## Configuration Reference
@@ -140,6 +141,7 @@ The codebase is split into two layers:
 | `triageRules.deferFor` | What to defer to team | `[]` (nothing deferred) |
 | `productContext` | Extended product context (markdown) | `""` |
 | `internalEmailDomain` | Email domain for internal users | `""` |
+| `deferMentions` | Slack user IDs @-mentioned when a thread is deferred to the team | `[]` |
 | `model` | Claude model ID | `"claude-opus-5"` |
 | `effort` | Reasoning effort (`low` to `max`) | `"high"` |
 

@@ -10,6 +10,11 @@
 import "../src/env.js";
 import { setDependencies, triageMessage, type TriageAction } from "../src/agent.js";
 import type { Dependencies } from "../src/tools.js";
+import config from "../src/config.js";
+
+// Phrases that assert roadmap status. A deferral about a topic not in config.triageRules.deferFor must avoid them.
+const ROADMAP_CLAIM = /post-mvp|on (the|our) roadmap|roadmap territory|is planned|are planned|coming soon|coming later|future (release|work)|not planned/i;
+const replies: string[] = [];
 
 const existingIssues = [
   {
@@ -30,6 +35,7 @@ const fakeSlack = {
   },
   chat: {
     postMessage: async ({ text }: { text: string }) => {
+      replies.push(text);
       console.log(`    [slack reply] ${text.replace(/\n/g, " ").substring(0, 160)}`);
       return { ok: true };
     },
@@ -77,7 +83,7 @@ setDependencies({
   slackBotToken: "xoxb-fake",
 });
 
-const cases: Array<{ name: string; text: string; expect: TriageAction }> = [
+const cases: Array<{ name: string; text: string; expect: TriageAction; unlistedTopic?: boolean }> = [
   {
     name: "new bug",
     text: "The date picker in the sidebar shows the wrong month after I switch timezones in settings - it jumps back to January every time.",
@@ -92,6 +98,7 @@ const cases: Array<{ name: string; text: string; expect: TriageAction }> = [
     name: "roadmap question",
     text: "Is there a plan to support SSO login for the admin panel? Any idea when that might land?",
     expect: "deferred",
+    unlistedTopic: true,
   },
   { name: "chit-chat", text: "thanks everyone, great session today!", expect: "skipped" },
 ];
@@ -99,6 +106,7 @@ const cases: Array<{ name: string; text: string; expect: TriageAction }> = [
 let failures = 0;
 for (const [i, c] of cases.entries()) {
   console.log(`\n=== ${c.name}`);
+  replies.length = 0;
   const result = await triageMessage({
     messageText: c.text,
     userId: "U0SMOKE",
@@ -106,9 +114,17 @@ for (const [i, c] of cases.entries()) {
     threadTs: `1700000000.00000${i}`,
     slackMessageUrl: `https://slack.com/archives/C0SMOKE/p170000000000000${i}`,
   });
-  const ok = result.action === c.expect;
-  if (!ok) failures++;
-  console.log(`${ok ? "PASS" : "FAIL"} ${c.name}: expected ${c.expect}, got ${result.action}${result.ticketIdentifier ? ` (${result.ticketIdentifier})` : ""}`);
+  const problems: string[] = [];
+  if (result.action !== c.expect) problems.push(`expected ${c.expect}, got ${result.action}`);
+  if (result.action === "deferred") {
+    const reply = replies.join("\n");
+    const missing = config.deferMentions.filter((id) => !reply.includes(`<@${id}>`));
+    if (missing.length > 0) problems.push(`defer reply is missing mentions: ${missing.join(", ")}`);
+    const claim = c.unlistedTopic ? reply.match(ROADMAP_CLAIM) : null;
+    if (claim) problems.push(`defer reply guesses roadmap status ("${claim[0]}")`);
+  }
+  if (problems.length > 0) failures++;
+  console.log(`${problems.length === 0 ? "PASS" : "FAIL"} ${c.name}: ${problems.length === 0 ? result.action : problems.join("; ")}${result.ticketIdentifier ? ` (${result.ticketIdentifier})` : ""}`);
 }
 
 console.log(`\n${cases.length - failures}/${cases.length} passed`);
