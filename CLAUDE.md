@@ -13,16 +13,17 @@ npm run typecheck # Type-check without emitting
 
 ## Architecture
 
-Three-file codebase with a clear separation between configuration and infrastructure:
+Four source files with a clear split between configuration and infrastructure:
 
-- **`src/config.ts`** (~500 lines) — **The single customization point.** All product-specific settings (name, triage rules, issue templates) and 8 prompt builder functions that construct system prompts at runtime. Edit this file to customize behavior.
-- **`src/agent.ts`** (~1600 lines) — Tool definitions (inline MCP), MCP server creation, system prompt instantiation, and 7 agent functions that call `query()` from the Claude Agent SDK.
-- **`src/index.ts`** (~1200 lines) — Slack Bolt listener (Socket Mode), message queue, in-memory thread/message tracking maps, image upload orchestration, and message routing logic.
+- **`src/config.ts`** — **The single customization point.** Product settings (name, triage rules, issue template, model, effort) and 8 prompt builder functions that construct system prompts at runtime.
+- **`src/tools.ts`** — Slack and Linear tools (`betaZodTool`), the `RunRecorder`, and the Slack-to-Linear image upload. `createTools(recorder)` builds a fresh tool set per agent run.
+- **`src/agent.ts`** — `runAgent()` (one `client.beta.messages.toolRunner()` loop) and the 7 agent flow functions.
+- **`src/index.ts`** — Slack Bolt listener (Socket Mode), message queue, in-memory thread/message tracking maps, image upload orchestration, and message routing.
 
 ### Message Flow
 
 1. Slack Bolt receives a message event in `index.ts`
-2. Message is classified and pushed to a sequential queue (prevents MCP server conflicts)
+2. Message is classified and pushed to a sequential queue (keeps thread replies ordered after their parent's triage)
 3. Queue processor routes to the appropriate agent function in `agent.ts`:
    - `triageMessage()` — New top-level messages → create ticket, find duplicate, skip, or defer
    - `handleThreadReply()` — Replies in tracked threads → update ticket or add comment (branches on same vs different reporter)
@@ -30,7 +31,11 @@ Three-file codebase with a clear separation between configuration and infrastruc
    - `handleDeferredFollowup()` — Replies in deferred threads → create ticket only if explicitly requested
    - `handleDirectCommand()` — @mention commands → execute ticket management actions
    - `handleMessageEdit()` / `handleMessageDelete()` — Edit/delete of triaged messages
-4. Each agent function creates an inline MCP server with scoped tools and calls `query()` with the appropriate system prompt
+4. Each flow calls `runAgent()` with a system prompt, a list of tool names, and the user prompt
+
+### Outcomes come from tools, not text
+
+Tools write their side effects to the run's `RunRecorder` (`created`, `commentedOn`, `updated`, `deferred`, `repliedInSlack`). Flows derive their result from it — e.g. triage is `created` if `linear_create_issue` ran, `duplicate` if `linear_add_comment` ran, `deferred` if `slack_defer_to_team` ran, otherwise `skipped`. Don't reintroduce regex matching on model output. If a new outcome matters for routing, add a tool (or a recorder field set by an existing tool) that captures it.
 
 ### In-Memory State (index.ts)
 
@@ -38,60 +43,62 @@ Three-file codebase with a clear separation between configuration and infrastruc
 - **`messageTicketMap`** — Maps `message_ts` → ticket info. Used to handle edits/deletes of triaged messages. 24h TTL.
 - **`processedMessages`** — Set of message timestamps to prevent duplicate processing. Capped at 1000 entries.
 
-### MCP Server Pattern
+### Tool sets per flow
 
-Each agent function gets its own `createSdkMcpServer()` with a scoped tool set. Tools are defined once as `tool()` instances and composed into different servers:
+| Flow | Tools |
+|------|-------|
+| triageMessage | slack_get_user_info, linear_search_issues, linear_create_issue, linear_add_comment, slack_reply_in_thread, slack_defer_to_team |
+| triageOrphanThreadReply, handleDeferredFollowup | same minus slack_defer_to_team |
+| handleThreadReply | slack_get_user_info, linear_get_issue, linear_update_issue, linear_add_comment, slack_reply_in_thread, slack_add_reaction |
+| handleDirectCommand | everything except slack_defer_to_team / slack_add_reaction |
+| handleMessageEdit | slack_get_user_info, linear_get_issue, linear_update_issue, linear_add_comment |
+| handleMessageDelete | linear_add_comment |
 
-| Server | Used by | Key tools |
-|--------|---------|-----------|
-| `triage-tools` | triageMessage, triageOrphanThreadReply | getUserInfo, searchIssues, createIssue, addComment, replyInThread, uploadImage |
-| `command-tools` | handleDirectCommand | All tools including status, labels, assign, close, reopen, link, updateTitle |
-| `followup-tools` | handleThreadReply | getUserInfo, getIssue, updateIssue, addComment, replyInThread, addReaction |
-| `deferred-tools` | handleDeferredFollowup | getUserInfo, searchIssues, createIssue, addComment, replyInThread |
-| `edit-handler-tools` | handleMessageEdit | getUserInfo, getIssue, updateIssue, addComment |
-| `delete-handler-tools` | handleMessageDelete | addComment |
+## Claude API Key Concepts
 
-Tool allowlists in `query()` options must match the server name: `mcp__<server-name>__<tool-name>`.
-
-## Claude Agent SDK Key Concepts
+This uses the Anthropic TypeScript SDK (`@anthropic-ai/sdk`), not the Claude Agent SDK. The tool runner is a beta helper:
 
 ```typescript
-query({
-  prompt: "..." | asyncIterableOfSDKUserMessages,  // string or multi-modal
-  options: {
-    model: "sonnet",              // Use aliases: "sonnet", "opus", "haiku" (NOT full model IDs)
-    systemPrompt: SYSTEM_PROMPT,
-    maxTurns: 10,
-    permissionMode: "bypassPermissions",
-    cwd: process.cwd(),
-    env: { ...process.env },      // MUST spread process.env for PATH
-    mcpServers: { "server-name": serverInstance },
-    allowedTools: ["mcp__server-name__tool_name"],  // REQUIRED — zero trust, all tools blocked unless listed
-  },
-})
+const runner = client.beta.messages.toolRunner({
+  model: config.model,                       // full model ID, e.g. "claude-opus-5"
+  max_tokens: 16000,
+  max_iterations: 12,                        // cap on API round-trips per run
+  system: [{ type: "text", text: SYSTEM_PROMPT }],
+  cache_control: { type: "ephemeral" },      // auto prompt caching across iterations
+  output_config: { effort: config.effort },
+  betas: ["server-side-fallback-2026-07-01"],
+  fallbacks: "default",                      // retry safety declines on a fallback model
+  tools: [betaZodTool({...}), ...],
+  messages: [{ role: "user", content: prompt }],
+});
+for await (const message of runner) { /* log each assistant turn */ }
+const final = await runner.done();
 ```
 
-Processing results: `for await (const message of result)` yields `assistant` (Claude responses/tool calls) and `result` (final output with `total_cost_usd`).
+- A tool that throws becomes an `is_error` tool result for Claude to react to - no need for try/catch in tools.
+- Adaptive thinking is on by default for Opus 5; don't send `budget_tokens` (400) or assistant prefill (400).
+- Check `stop_reason === "refusal"` before trusting a result.
 
 ## Configuration
 
-### Environment Variables (all required)
-`ANTHROPIC_API_KEY`, `SLACK_BOT_TOKEN` (xoxb-), `SLACK_APP_TOKEN` (xapp-), `SLACK_SIGNING_SECRET`, `SLACK_CHANNEL_ID`, `LINEAR_API_KEY`, `LINEAR_TEAM_ID`, `LINEAR_PROJECT_ID`
+### Environment Variables
+Required: `ANTHROPIC_API_KEY`, `SLACK_BOT_TOKEN` (xoxb-), `SLACK_APP_TOKEN` (xapp-), `SLACK_SIGNING_SECRET`, `SLACK_CHANNEL_ID`, `LINEAR_API_KEY`, `LINEAR_TEAM_ID`
+Optional: `LINEAR_PROJECT_ID` (scopes new tickets and duplicate search to one project)
 
 ### Config Object (`src/config.ts`)
 Required: `productName`, `productShortName`, `productDescription`, `slackChannelName`, `linearOrganization`
-Optional: `issueTemplate` (titlePrefix, labelIds, stateId, descriptionTemplate), `triageRules` (createFor, skipFor, deferFor), `productContext`, `internalEmailDomain`, `model`
+Optional: `issueTemplate` (titlePrefix, labelIds, stateId, descriptionTemplate), `triageRules` (createFor, skipFor, deferFor), `productContext`, `internalEmailDomain`, `model` (full model ID), `effort`
 
 ## Development Workflow
 
-1. Run `npm run dev` in a background process
-2. After code changes, kill and restart the process (tsx doesn't hot-reload)
-3. Monitor stdout for `[Agent]`, `[Followup Agent]`, `[Command Agent]` etc. prefixed logs
+1. `npm run typecheck` and `npm run smoke` after changes to tools or prompts (smoke uses fake Slack/Linear and the real Claude API)
+2. `npm run dev` in a background process; kill and restart after code changes (tsx doesn't hot-reload)
+3. Monitor stdout for `[Triage Agent]`, `[Followup Agent]`, `[Command Agent]` etc. prefixed logs - each tool call and the per-run token/cache usage are logged
 4. Message recovery on startup uses `robot_face` emoji as a marker — first run skips historical recovery
 
 ## Common Issues
 
-1. **Model not found**: Use model aliases (`sonnet`, `opus`, `haiku`) not full model IDs
-2. **Tools not working**: Ensure `allowedTools` array includes all MCP tools with correct server name prefix
-3. **Process spawn fails**: Spread `process.env` in the `env` option (needed for PATH)
-4. **Queue stalls**: Messages are processed sequentially — a slow agent call blocks subsequent messages
+1. **400 on the request**: check the model ID is exact (no date suffix) and that no `budget_tokens`, `temperature`, or assistant prefill slipped in - all rejected on Opus 5
+2. **Tool not available to a flow**: add its name to that flow's `tools` list in `agent.ts`
+3. **Wrong outcome recorded**: the flow's result comes from `RunRecorder` - check which tool ran, not what the model said
+4. **Queue stalls**: messages are processed sequentially - a slow agent run blocks subsequent messages

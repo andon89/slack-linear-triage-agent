@@ -1,6 +1,6 @@
 # Slack-to-Linear Triage Agent
 
-AI-powered Slack-to-Linear triage agent built with the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk). Monitors a Slack channel for product feedback and automatically creates, deduplicates, and manages Linear tickets.
+AI-powered Slack-to-Linear triage agent built on the [Claude API](https://platform.claude.com/docs) using the Anthropic TypeScript SDK's Tool Runner. Monitors a Slack channel for product feedback and automatically creates, deduplicates, and manages Linear tickets.
 
 ## Features
 
@@ -61,16 +61,18 @@ const config: TriageConfig = {
   triageRules: { ... },               // What to create/skip/defer
   productContext: "...",               // Extended product context for the AI
   internalEmailDomain: "mycompany.com", // Detect internal vs external users
-  model: "sonnet",                     // Claude model to use
+  model: "claude-opus-5",              // Claude model ID
+  effort: "high",                      // Reasoning effort: low | medium | high | xhigh | max
 };
 ```
 
 ### 6. Run
 
 ```bash
-npm run dev      # Development (with hot-reload via tsx)
+npm run dev      # Development via tsx (restart after code changes)
 npm run build    # Compile TypeScript
 npm start        # Run compiled version
+npm run smoke    # Triage 3 sample messages against the real Claude API with fake Slack/Linear (a few cents)
 ```
 
 ## Architecture
@@ -78,8 +80,11 @@ npm start        # Run compiled version
 ```
 src/
   config.ts   -- Single customization point (edit this file)
-  agent.ts    -- Claude Agent SDK tools, prompts, and agent logic
+  agent.ts    -- Agent flows: one Tool Runner loop per Slack event
+  tools.ts    -- Slack and Linear tools, plus the RunRecorder that captures what they did
   index.ts    -- Slack event listener and message infrastructure
+scripts/
+  smoke.ts    -- End-to-end check with fake Slack/Linear clients
 ```
 
 ### Config vs Infrastructure
@@ -87,12 +92,12 @@ src/
 The codebase is split into two layers:
 
 - **`config.ts`** (~300 lines): Everything you customize — product name, triage rules, prompt templates, issue template. Edit this file + `.env` to deploy.
-- **`agent.ts` + `index.ts`** (~3500 lines): Infrastructure you don't touch — tool implementations, message queuing, thread tracking, image uploads, connection management.
+- **`agent.ts`, `tools.ts`, `index.ts`**: Infrastructure you don't touch — tool implementations, message queuing, thread tracking, image uploads, connection management.
 
 ### How it works
 
 1. **Slack listener** (`index.ts`) receives messages via Socket Mode
-2. Messages are queued for sequential processing (prevents MCP server conflicts)
+2. Messages are queued for sequential processing, so a thread reply is never handled before its parent's triage finishes
 3. For each message, the appropriate **agent function** (`agent.ts`) is called:
    - `triageMessage()` — New messages → create ticket, find duplicate, skip, or defer
    - `handleThreadReply()` — Replies in tracked threads → update ticket or add comment
@@ -100,7 +105,15 @@ The codebase is split into two layers:
    - `handleDeferredFollowup()` — Replies in deferred threads → create ticket if requested
    - `handleDirectCommand()` — @mention commands → execute ticket management actions
    - `handleMessageEdit()` / `handleMessageDelete()` — Edit/delete handling
-4. Each agent function calls `query()` from the Claude Agent SDK with inline MCP tools
+4. Each agent function runs `client.beta.messages.toolRunner()` with the subset of tools it needs. The SDK loops (Claude calls a tool, the tool runs, the result goes back) until Claude is done.
+5. Tools record their side effects (ticket created, comment added, thread deferred) on a per-run `RunRecorder`. The bot decides how to track the thread from those records, not from the model's wording.
+
+### Claude API settings
+
+- **Model**: `claude-opus-5` by default (`config.model`), with `effort` controlling reasoning depth.
+- **Refusal fallbacks**: on Opus 5 / Fable 5 models, requests opt into server-side fallbacks (`fallbacks: "default"`), so a safety-classifier decline is retried on Anthropic's recommended fallback model instead of failing.
+- **Prompt caching**: top-level `cache_control` caches the system prompt, tools, and conversation between tool-loop iterations.
+- **Vision**: screenshots on new messages are sent to Claude as image blocks and re-hosted on Linear's CDN for the ticket.
 
 ## Configuration Reference
 
@@ -127,7 +140,8 @@ The codebase is split into two layers:
 | `triageRules.deferFor` | What to defer to team | `[]` (nothing deferred) |
 | `productContext` | Extended product context (markdown) | `""` |
 | `internalEmailDomain` | Email domain for internal users | `""` |
-| `model` | Claude model alias | `"sonnet"` |
+| `model` | Claude model ID | `"claude-opus-5"` |
+| `effort` | Reasoning effort (`low` to `max`) | `"high"` |
 
 ## Environment Variables
 
@@ -140,7 +154,7 @@ The codebase is split into two layers:
 | `SLACK_CHANNEL_ID` | Channel ID to monitor |
 | `LINEAR_API_KEY` | Linear API key |
 | `LINEAR_TEAM_ID` | Linear team UUID |
-| `LINEAR_PROJECT_ID` | Linear project UUID |
+| `LINEAR_PROJECT_ID` | Linear project UUID (optional - without it, tickets have no project and duplicate search covers the whole team) |
 
 ## @mention Commands
 

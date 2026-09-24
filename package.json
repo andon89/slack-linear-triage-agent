@@ -10,21 +10,22 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "npx tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.39",
-    "@linear/sdk": "^29.0.0",
-    "@slack/bolt": "^3.17.0",
-    "dotenv": "^16.3.0",
-    "zod": "^3.25.0"
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@linear/sdk": "^95.2.0",
+    "@slack/bolt": "^5.1.0",
+    "dotenv": "^18.0.3",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.0.0"
+    "@types/node": "^22.20.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }
