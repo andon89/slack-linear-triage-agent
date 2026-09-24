@@ -58,8 +58,12 @@ export interface TriageConfig {
   productContext: string;
   /** Internal email domain (e.g., "mycompany.com") used to distinguish team vs. external users. */
   internalEmailDomain: string;
-  /** Claude model alias to use for all agent calls. */
-  model: "sonnet" | "opus" | "haiku";
+  /** Slack user IDs to @-mention whenever the bot defers a thread to the team (e.g. the PM). */
+  deferMentions: string[];
+  /** Claude model ID used for every agent run (e.g. "claude-opus-5"). */
+  model: string;
+  /** Reasoning effort for agent runs. Lower is faster and cheaper; "high" is the API default. */
+  effort: "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 // ---------------------------------------------------------------------------
@@ -79,20 +83,26 @@ export function buildTriageSystemPrompt(cfg: TriageConfig): string {
     ? cfg.triageRules.skipFor.map((r) => `- ${r}`).join("\n")
     : '- "thanks", "ok", "+1", casual chat, greetings';
 
-  const deferSection = cfg.triageRules.deferFor.length > 0
-    ? `\n## When to DEFER
-DEFER when the message asks about or requests features on the known roadmap:
-${cfg.triageRules.deferFor.map((r) => `- ${r}`).join("\n")}
+  const knownTopics = cfg.triageRules.deferFor.length > 0
+    ? `These are the ONLY topics whose roadmap status you know. You may describe them exactly as written here:
+${cfg.triageRules.deferFor.map((r) => `- ${r}`).join("\n")}`
+    : "You have no information about the roadmap.";
+
+  const deferSection = `
+## When to DEFER
+DEFER questions about the roadmap or future plans, and requests that need a team decision rather than a bug fix.
+
+${knownTopics}
+
+## Never guess roadmap status
+Do not state or imply that anything is planned, on the roadmap, post-MVP, coming later, "future work", or not planned - unless it appears in the list above, and then only as described there. Don't infer status by analogy to a listed topic. For anything not listed, say plainly that you don't have information on it and that you're flagging it for the team. Describing what the product does TODAY (from the product context) is fine.
 
 When you DEFER:
-- Share what you know about the topic
-- Then defer: "I'll let the team share more details"
+- Briefly share what you know from the product context, following the rule above
+- Hand off to the team - the tool tags the right people automatically, so don't @-mention anyone yourself
 - Do NOT create a ticket - the thread will be monitored for follow-ups
-- Use the slack_reply_in_thread tool to respond
-
-**DEFER Response Style** (be helpful, not robotic):
-- Share relevant context, then defer to the team for specifics\n`
-    : "";
+- Respond with the slack_defer_to_team tool (not slack_reply_in_thread) - that is how the bot knows to watch the thread
+`;
 
   const titleNote = cfg.issueTemplate.titlePrefix
     ? `Provide just the issue title WITHOUT the "${cfg.issueTemplate.titlePrefix}" prefix (it's added automatically by the tool). Keep titles concise (max 80 chars).`
@@ -117,14 +127,14 @@ If the message appears to be directly addressing you by name (e.g., "hey bot", "
 
 "I'm designed to automatically triage feedback messages in this channel. If you'd like me to take a specific action, please @-tag me directly with your request - I can check for duplicates, update ticket status, close/reopen issues, and more."
 
-Set action to SKIPPED.
+Don't create a ticket in this case.
 
 ## Triage Rules
 - CREATE ticket for:
 ${createRules}
-- SKIP (no action):
+- SKIP (call no tools, just state your reason in one line):
 ${skipRules}
-- DEFER (let team respond): questions about roadmap features, requests needing team discussion
+- DEFER (let team respond): roadmap questions and requests needing a team decision - see "When to DEFER" below. Always defer with the slack_defer_to_team tool, never slack_reply_in_thread.
 ${deferSection}
 ## Forwarded Messages
 Sometimes feedback is forwarded/shared from other channels. When a message is marked as FORWARDED:
@@ -138,9 +148,9 @@ Sometimes feedback is forwarded/shared from other channels. When a message is ma
 ## If Creating a Ticket
 1. Get user info with slack_get_user_info
 2. Search for duplicates with a COMPREHENSIVE keyword array:
-   - Pass ALL relevant synonyms in a single search (the tool uses OR logic)
-   - Include the literal terms AND semantic equivalents
-   - Be aggressive about finding duplicates - creating duplicates is worse than adding to existing tickets
+   - Pass all relevant synonyms in a single search (the tool uses OR logic)
+   - Include the literal terms and semantic equivalents
+   - Lean toward finding duplicates - a duplicate ticket costs the team more than an extra comment on an existing one
 3. If duplicate found: use linear_add_comment to add reporter details and Slack link
 4. If new: use linear_create_issue with:
    - title, description, priority
@@ -187,7 +197,9 @@ ${titleNote}
 
 **Important**: UX-only issues should be **Priority 3 (Normal)** unless they're genuinely blocking work.
 
-## Slack Formatting
+## Slack Replies
+Keep Slack replies short: the action you took, the link, and at most two questions.
+
 When using slack_reply_in_thread, use Slack's native formatting - NOT Markdown:
 - Bold: *text* (NOT **text** - double asterisks render as literal * in Slack)
 - Italic: _text_
@@ -300,7 +312,7 @@ The SAME USER who originally reported this issue is providing additional context
 
 ## FIRST: Decide if you should SKIP
 
-**SKIP (respond with "SKIPPED" and take NO action) for:**
+**SKIP (call no tools; state your reason in one line) for:**
 - Team coordination: "let's discuss tomorrow", "we can talk about this in triage"
 - @mentions to specific people asking for their input
 - Simple acknowledgments: "thanks", "ok", "+1", "sounds good", "got it"
@@ -351,7 +363,7 @@ A DIFFERENT USER (not the original reporter) is providing additional context on 
 
 ## FIRST: Decide if you should SKIP
 
-**SKIP (respond with "SKIPPED" and take NO action) for:**
+**SKIP (call no tools; state your reason in one line) for:**
 - Team coordination: "let's discuss tomorrow", "we can talk about this in triage"
 - @mentions to specific people asking for their input
 - Simple acknowledgments: "thanks", "ok", "+1", "sounds good", "got it"
@@ -427,7 +439,7 @@ If someone explicitly requests a ticket:
 4. Reply in Slack confirming the ticket was created
 
 ## Response Format
-- If NO_ACTION: respond with exactly "NO_ACTION" and nothing else
+- If no action is needed: call no tools other than slack_get_user_info, and state your reason in one line
 - If creating a ticket: use the tools, then confirm briefly in Slack`;
 }
 
@@ -523,7 +535,10 @@ const config: TriageConfig = {
 
   internalEmailDomain: "", // e.g., "mycompany.com" - used to detect internal vs external users
 
-  model: "sonnet",
+  deferMentions: [], // e.g., ["U0123ABCD"] - Slack user IDs tagged when a thread is deferred
+
+  model: "claude-opus-5",
+  effort: "high",
 };
 
 export default config;

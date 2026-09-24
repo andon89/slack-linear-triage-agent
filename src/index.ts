@@ -1,8 +1,7 @@
-import "dotenv/config";
-import pkg from "@slack/bolt";
-const { App, LogLevel } = pkg;
+import "./env.js";
+import { App, LogLevel } from "@slack/bolt";
 import { LinearClient } from "@linear/sdk";
-import { triageMessage, setDependencies, type ImageAttachment, type TriageImage, uploadImageToLinearCdn, handleThreadReply, triageOrphanThreadReply, handleDeferredFollowup, handleDirectCommand, handleMessageEdit, handleMessageDelete } from "./agent.js";
+import { triageMessage, setDependencies, type TriageImage, type TriageAction, uploadImageToLinearCdn, handleThreadReply, triageOrphanThreadReply, handleDeferredFollowup, handleDirectCommand, handleMessageEdit, handleMessageDelete } from "./agent.js";
 import appConfig from "./config.js";
 
 // Configuration
@@ -13,7 +12,7 @@ const config = {
   slackChannelId: process.env.SLACK_CHANNEL_ID!,
   linearApiKey: process.env.LINEAR_API_KEY!,
   linearTeamId: process.env.LINEAR_TEAM_ID!,
-  linearProjectId: process.env.LINEAR_PROJECT_ID!,
+  linearProjectId: process.env.LINEAR_PROJECT_ID || undefined,
   nodeEnv: process.env.NODE_ENV ?? "development",
 };
 
@@ -26,7 +25,6 @@ const requiredEnvVars = [
   "SLACK_CHANNEL_ID",
   "LINEAR_API_KEY",
   "LINEAR_TEAM_ID",
-  "LINEAR_PROJECT_ID",
 ];
 
 for (const envVar of requiredEnvVars) {
@@ -38,7 +36,7 @@ for (const envVar of requiredEnvVars) {
 
 const processedMessages = new Set<string>();
 
-// Message queue to ensure sequential processing (prevents shared MCP server conflicts)
+// Sequential queue so a thread reply is never handled before its parent message's triage finishes
 type QueuedMessage = {
   type: "new" | "thread_reply" | "orphan_thread" | "deferred_followup" | "direct_command" | "message_edited" | "message_deleted";
   data: Record<string, unknown>;
@@ -47,7 +45,7 @@ const messageQueue: QueuedMessage[] = [];
 let isProcessing = false;
 
 async function processQueue(
-  slackApp: InstanceType<typeof pkg.App>,
+  slackApp: App,
   processNewMessage: (data: Record<string, unknown>) => Promise<void>,
   processThreadReply: (data: Record<string, unknown>) => Promise<void>,
   processOrphanThread: (data: Record<string, unknown>) => Promise<void>,
@@ -120,7 +118,7 @@ const messageTicketMap = new Map<string, {
   ticketUrl?: string;
   createdAt: number;
   wasTriaged: boolean;
-  action: "created" | "duplicate" | "skipped" | "deferred" | "error";
+  action: TriageAction;
 }>();
 
 function cleanupOldMessageMappings(): void {
@@ -156,7 +154,7 @@ function parseSlackUrl(url: string): { channelId: string; messageTs: string; thr
 
 // Fetch thread messages from a channel (for forwarded message context)
 async function fetchThreadContext(
-  app: InstanceType<typeof pkg.App>,
+  app: App,
   channelId: string,
   threadTs: string,
   limit = 30
@@ -241,7 +239,7 @@ function isProcessableMessage(msg: {
 }
 
 // Global state for connection management
-let slackApp: InstanceType<typeof pkg.App> | null = null;
+let slackApp: App | null = null;
 let isShuttingDown = false;
 let signalHandlersRegistered = false;
 
@@ -283,9 +281,12 @@ async function main(): Promise<void> {
   const botUserId = authResult.user_id;
   console.log(`Bot user ID: ${botUserId}`);
 
-  setDependencies(app, linearClient, {
-    teamId: config.linearTeamId,
-    projectId: config.linearProjectId,
+  setDependencies({
+    slack: app.client,
+    linear: linearClient,
+    linearTeamId: config.linearTeamId,
+    linearProjectId: config.linearProjectId,
+    slackBotToken: config.slackBotToken,
   });
 
   async function connectToLinearWithRetry(maxRetries = 5, initialDelayMs = 2000): Promise<void> {
